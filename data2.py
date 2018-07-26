@@ -90,7 +90,7 @@ class MidiDataset(object):
 		iterator = dataset.make_initializable_iterator()
 		next_y = iterator.get_next()
 
-		next_x = tf.reshape(ops.RightShift2D(next_y), [-1, MidiDataset.notes])
+		next_x = tf.reshape(ops.RightShift(tf.reshape(next_y, [1, -1, MidiDataset.notes])), [-1, MidiDataset.notes])
 
 		print(next_x, next_y)
 

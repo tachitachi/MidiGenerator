@@ -86,13 +86,13 @@ class WaveNet(object):
 				skip_layers.append(skip)
 
 
-#			total = tf.reduce_sum(skip_layers, axis=0)
-#			total = tf.nn.relu(total)
-#
-#			total = tf.layers.conv1d(total, filters=self.skip_channels, kernel_size=1, strides=1, padding='SAME')
-#			total = tf.nn.relu(total)
+			total = tf.reduce_sum(skip_layers, axis=0)
+			total = tf.nn.relu(total)
 
-			total = tf.layers.conv1d(h, filters=self.output_channels, kernel_size=1, strides=1, padding='SAME')
+			total = tf.layers.conv1d(total, filters=self.skip_channels, kernel_size=1, strides=1, padding='SAME')
+			total = tf.nn.relu(total)
+
+			total = tf.layers.conv1d(total, filters=self.output_channels, kernel_size=1, strides=1, padding='SAME')
 
 			return total
 
