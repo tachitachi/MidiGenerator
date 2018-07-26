@@ -26,14 +26,22 @@ def main(args):
 
 	wavenet = WaveNet(scope='model')
 
-	generated = wavenet(batch_x)
+	generated, counts = wavenet(batch_x)
+	#MidiDataset.to_summary('generated', tf.nn.softmax(generated))
 	MidiDataset.to_summary('generated', tf.nn.sigmoid(generated))
 	MidiDataset.to_summary('output_midi', tf.round(tf.nn.sigmoid(generated)))
+
+	num_notes = tf.reduce_sum(batch_y, 2)
+	probs = batch_y / tf.expand_dims(tf.maximum(1.0, num_notes), 2)
 
 
 	# create loss functions
 
-	total_loss = tf.losses.sigmoid_cross_entropy(batch_y, generated)
+	#distribution_loss = tf.losses.softmax_cross_entropy(probs, generated)
+	distribution_loss = tf.losses.sigmoid_cross_entropy(batch_y, generated)
+	count_loss = tf.losses.mean_squared_error(num_notes, counts)
+
+	total_loss = distribution_loss + count_loss
 	
 
 	inc_global_step = tf.assign_add(tf.train.get_or_create_global_step(), 1)

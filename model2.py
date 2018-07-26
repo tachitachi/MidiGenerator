@@ -92,9 +92,10 @@ class WaveNet(object):
 			total = tf.layers.conv1d(total, filters=self.skip_channels, kernel_size=1, strides=1, padding='SAME')
 			total = tf.nn.relu(total)
 
-			total = tf.layers.conv1d(total, filters=self.output_channels, kernel_size=1, strides=1, padding='SAME')
+			distribution = tf.layers.conv1d(total, filters=self.output_channels, kernel_size=1, strides=1, padding='SAME')
+			note_count = tf.squeeze(tf.layers.conv1d(total, filters=1, kernel_size=1, strides=1, padding='SAME'), 2)
 
-			return total
+			return distribution, note_count
 
 
 
