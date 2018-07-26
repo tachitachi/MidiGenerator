@@ -4,6 +4,7 @@ import os
 import argparse
 from tqdm import tqdm
 import tensorflow as tf
+import ops
 
 from collections import defaultdict
 
@@ -19,6 +20,8 @@ class MidiDataset(object):
 		'train': 'train.tfrecord',
 		'test': 'test.tfrecord',
 	}
+
+	notes = 128
 
 	def __init__(self, split, data_dir):
 		self.data_dir = data_dir
@@ -63,7 +66,7 @@ class MidiDataset(object):
 			process(all_files, train_idx, 'train')
 			process(all_files, test_idx, 'test')
 
-		self.x = self._load(split)
+		self.x, self.y = self._load(split)
 
 	def _load(self, split):
     # sess.run(tf.get_collection(tf.GraphKeys.TABLE_INITIALIZERS))
@@ -75,10 +78,9 @@ class MidiDataset(object):
 				'length': tf.FixedLenFeature([1], dtype=tf.int64),
 			}
 			parsed_features = tf.parse_single_example(example_proto, features)
-			print(parsed_features)
 
 			#return tf.reshape(parsed_features['data'], parsed_features['shape'])
-			return tf.reshape(parsed_features['data'], [-1, 128])
+			return tf.reshape(parsed_features['data'], [-1, MidiDataset.notes])
 
 		dataset = tf.data.TFRecordDataset(os.path.join(self.processed_dir, MidiDataset.splits[split]))
 		dataset = dataset.map(_parse_function)
@@ -86,11 +88,19 @@ class MidiDataset(object):
 		dataset = dataset.repeat()
 
 		iterator = dataset.make_initializable_iterator()
-		next_x = iterator.get_next()
+		next_y = iterator.get_next()
+
+		next_x = tf.reshape(ops.RightShift2D(next_y), [-1, MidiDataset.notes])
+
+		print(next_x, next_y)
 
 		tf.add_to_collection(tf.GraphKeys.TABLE_INITIALIZERS, iterator.initializer)
 
-		return next_x
+		return next_x, next_y
+
+	@staticmethod
+	def to_summary(name, x):
+		tf.summary.image(name, tf.cast(tf.expand_dims(tf.transpose(x, [0, 2, 1]), 3), tf.float32))
 						
 				
 class Note(object):
