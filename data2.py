@@ -15,6 +15,16 @@ def _bytes_feature(value):
 def _float_feature(value):
 	return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
+def trim_zeros_2D(array, axis=1):
+    mask = ~(array==0).all(axis=axis)
+    inv_mask = mask[::-1]
+    start_idx = np.argmax(mask == True)
+    end_idx = len(inv_mask) - np.argmax(inv_mask == True)
+    if axis:
+        return array[start_idx:end_idx,:]
+    else:
+        return array[:, start_idx:end_idx]
+
 class MidiDataset(object):
 	splits = {
 		'train': 'train.tfrecord',
@@ -23,8 +33,10 @@ class MidiDataset(object):
 
 	notes = 128
 
-	def __init__(self, split, data_dir):
+	def __init__(self, split, data_dir, data_length=512, is_training=False):
 		self.data_dir = data_dir
+		self.data_length = data_length
+		self.is_training = is_training
 
 		self.processed_dir = os.path.join(self.data_dir, 'processed')
 
@@ -47,12 +59,18 @@ class MidiDataset(object):
 				with open(os.path.join(self.processed_dir, '%s.txt' % output_name), 'w') as f:
 					for i in tqdm(idx):
 						file = all_files[i]
-						f.write('%s\n' % os.path.basename(file))
 						data = np.load(file)
+
+						# strip out silence on ends of data
+						data = trim_zeros_2D(data, axis=1)
+
 
 						shape = list(data.shape)
 						notes = data.shape[1]
 						length = data.shape[0]
+
+						if length < self.data_length:
+							continue
 
 						feature = {
 							'data': _int64_feature(data.reshape([-1])),
@@ -62,6 +80,7 @@ class MidiDataset(object):
 
 						example = tf.train.Example(features=tf.train.Features(feature=feature))
 						writer.write(example.SerializeToString())
+						f.write('%s\n' % os.path.basename(file))
 
 			process(all_files, train_idx, 'train')
 			process(all_files, test_idx, 'test')
@@ -79,8 +98,25 @@ class MidiDataset(object):
 			}
 			parsed_features = tf.parse_single_example(example_proto, features)
 
-			#return tf.reshape(parsed_features['data'], parsed_features['shape'])
-			return tf.reshape(parsed_features['data'], [-1, MidiDataset.notes])
+			data = tf.reshape(parsed_features['data'], [-1, MidiDataset.notes])
+
+			if self.data_length is not None:
+
+				start_idx = tf.random_uniform((), 0, tf.shape(data)[0] - self.data_length, dtype=tf.int32)
+
+				# add padding? to make sure smaller files are large enough
+
+				data = tf.slice(data, [start_idx, 0], [self.data_length, tf.shape(data)[1]])
+				#data.set_shape([None, MidiDataset.notes])
+
+			y = data
+			x = tf.pad(data, [[1, 0], [0, 0]])
+			x = tf.slice(x, [0, 0], [tf.shape(x)[0]-1, -1])
+
+			x.set_shape([self.data_length, MidiDataset.notes])
+			y.set_shape([self.data_length, MidiDataset.notes])
+
+			return x, y
 
 		dataset = tf.data.TFRecordDataset(os.path.join(self.processed_dir, MidiDataset.splits[split]))
 		dataset = dataset.map(_parse_function)
@@ -88,9 +124,10 @@ class MidiDataset(object):
 		dataset = dataset.repeat()
 
 		iterator = dataset.make_initializable_iterator()
-		next_y = iterator.get_next()
+		#next_y = iterator.get_next()
+		next_x, next_y = iterator.get_next()
 
-		next_x = tf.reshape(ops.RightShift(tf.reshape(next_y, [1, -1, MidiDataset.notes])), [-1, MidiDataset.notes])
+		#next_x = tf.reshape(ops.RightShift(tf.reshape(next_y, [1, -1, MidiDataset.notes])), [-1, MidiDataset.notes])
 
 		print(next_x, next_y)
 

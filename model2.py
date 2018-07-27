@@ -61,13 +61,14 @@ def ResidualDilationLayerNC(inputs, kernel_size, dilation_channels, skip_channel
 
 class WaveNet(object):
 	def __init__(self, dilations=[1, 2, 4, 8, 16, 32, 64, 128, 256], filter_width=2, 
-		         dilation_channels=32, skip_channels=256, output_channels=128, scope='WaveNet'):
+		         dilation_channels=32, skip_channels=256, output_channels=128, activation_fn=None, scope='WaveNet'):
 
 		self.dilations = dilations
 		self.filter_width = filter_width
 		self.dilation_channels = dilation_channels
 		self.skip_channels = skip_channels
 		self.output_channels = output_channels
+		self.activation_fn = activation_fn
 		self.scope = scope
 
 	def __call__(self, x, reuse=False):
@@ -92,10 +93,52 @@ class WaveNet(object):
 			total = tf.layers.conv1d(total, filters=self.skip_channels, kernel_size=1, strides=1, padding='SAME')
 			total = tf.nn.relu(total)
 
-			distribution = tf.layers.conv1d(total, filters=self.output_channels, kernel_size=1, strides=1, padding='SAME')
-			note_count = tf.squeeze(tf.layers.conv1d(total, filters=1, kernel_size=1, strides=1, padding='SAME'), 2)
+			output = tf.layers.conv1d(total, filters=self.output_channels, kernel_size=1, strides=1, padding='SAME')
+			#note_count = tf.squeeze(tf.layers.conv1d(total, filters=1, kernel_size=1, strides=1, padding='SAME'), 2)
 
-			return distribution, note_count
+			if self.activation_fn is not None:
+				output = self.activation_fn(output)
+
+			return output
 
 
 
+
+class WavePatch(object):
+	def __init__(self, dilations=[1, 2, 4, 8, 16, 32, 64, 128, 256], filter_width=2, 
+		         dilation_channels=32, skip_channels=256, pool_stride=128, scope='WavePatch'):
+
+		self.dilations = dilations
+		self.filter_width = filter_width
+		self.dilation_channels = dilation_channels
+		self.skip_channels = skip_channels
+		self.pool_stride = pool_stride
+		self.scope = scope
+
+	def __call__(self, x, reuse=False):
+
+		with tf.variable_scope(self.scope, reuse=reuse):
+		
+			skip_layers = []
+
+			h = DilatedCausalConv1d(x, self.filter_width, channels=self.dilation_channels, dilation_rate=1, name='causal_conv')
+
+			for i in range(len(self.dilations)):
+				dilation = self.dilations[i]
+				name = 'dilated_conv_{}'.format(i)
+				h, skip = ResidualDilationLayer(h, kernel_size=self.filter_width, dilation_channels=self.dilation_channels, 
+					skip_channels=self.skip_channels, dilation_rate=dilation, name=name)
+				skip_layers.append(skip)
+
+
+			total = tf.reduce_sum(skip_layers, axis=0)
+			total = tf.nn.relu(total)
+
+			total = tf.layers.conv1d(total, filters=self.skip_channels, kernel_size=1, strides=1, padding='SAME')
+			total = tf.nn.relu(total)
+
+			total = tf.layers.conv1d(total, filters=1, kernel_size=1, strides=1, padding='SAME')
+			
+			logits = tf.nn.pool(total, window_shape=(self.pool_stride,), strides=(self.pool_stride,), pooling_type='AVG', padding='VALID')
+
+			return logits

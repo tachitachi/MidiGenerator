@@ -1,11 +1,11 @@
 import argparse
 import tensorflow as tf
-from data2 import MidiDataset
+from data2 import MidiDataset, create_batch
 import numpy as np
 from tqdm import tqdm
 import os
 import time
-from model2 import WaveNet
+from model2 import WaveNet, WavePatch
 
 def main(args):
 
@@ -15,41 +15,69 @@ def main(args):
 	x = tf.cast(dataset.x, tf.float32)
 	y = tf.cast(dataset.y, tf.float32)
 
-	#batch_x = data2.create_batch([x], batch_size=args.batch_size)
-	batch_x = tf.expand_dims(x, 0)
-	batch_y = tf.expand_dims(y, 0)
+	batch_x, batch_y = create_batch([x, y], batch_size=args.batch_size)
+	#batch_x = tf.expand_dims(x, 0)
+	#batch_y = tf.expand_dims(y, 0)
 	MidiDataset.to_summary('input', batch_x)
 	MidiDataset.to_summary('gt_output', batch_y)
+
+	noise = tf.random_normal((args.batch_size, int(y.shape[0]), 1), dtype=tf.float32)
+	print(noise, y, batch_y)
 
 
 	# build models
 
-	wavenet = WaveNet(scope='model')
+	dilations = [1, 1, 2, 4, 8, 16, 32, 64, 128]
 
-	generated, counts = wavenet(batch_x)
+	wavenet = WaveNet(dilations=dilations, activation_fn=tf.nn.sigmoid, scope='model/generator')
+
+	generated = wavenet(noise)
 	#MidiDataset.to_summary('generated', tf.nn.softmax(generated))
-	MidiDataset.to_summary('generated', tf.nn.sigmoid(generated))
-	MidiDataset.to_summary('output_midi', tf.round(tf.nn.sigmoid(generated)))
+	MidiDataset.to_summary('generated', generated)
+	MidiDataset.to_summary('output_midi', tf.round(generated))
 
-	num_notes = tf.reduce_sum(batch_y, 2)
-	probs = batch_y / tf.expand_dims(tf.maximum(1.0, num_notes), 2)
+	wavepatch = WavePatch(dilations=dilations, pool_stride=64, scope='model/discriminator')
+
+	preds = wavepatch(tf.concat([batch_y, generated], axis=0))
+
+	labels_real = tf.zeros((args.batch_size, 1, 1), dtype=tf.float32)
+	labels_fake = tf.ones((args.batch_size, 1, 1), dtype=tf.float32)
+
+	labels = tf.tile(tf.concat([labels_real, labels_fake], axis=0), [1, tf.shape(preds)[1], tf.shape(preds)[2]])
 
 
 	# create loss functions
 
-	#distribution_loss = tf.losses.softmax_cross_entropy(probs, generated)
-	distribution_loss = tf.losses.sigmoid_cross_entropy(batch_y, generated)
-	count_loss = tf.losses.mean_squared_error(num_notes, counts)
+	discriminator_loss = tf.losses.sigmoid_cross_entropy(labels, preds, scope='discriminator_loss')
+	generator_loss = tf.losses.sigmoid_cross_entropy(1 - labels, preds, scope='generator_loss')
 
-	total_loss = distribution_loss + count_loss
+	total_loss = discriminator_loss + generator_loss
+
+	discriminator_accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.cast(tf.round(tf.nn.sigmoid(preds)), tf.int32), tf.cast(labels, tf.int32)), tf.float32))
+	tf.summary.scalar('discriminator_accuracy', discriminator_accuracy)
+
+
+	#distribution_loss = tf.losses.softmax_cross_entropy(probs, generated)
+	#distribution_loss = tf.losses.sigmoid_cross_entropy(batch_y, generated)
+	#count_loss = tf.losses.mean_squared_error(num_notes, counts)
+
+	#total_loss = distribution_loss + count_loss
 	
 
 	inc_global_step = tf.assign_add(tf.train.get_or_create_global_step(), 1)
 	tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, inc_global_step)
 
+	discriminator_vars = var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/discriminator')
+	generator_vars = var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/generator')
+
+	optimizer = tf.train.AdamOptimizer(args.learning_rate, beta1=0.5)
+
 	update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 	with tf.control_dependencies(update_ops):
-		train_tensor = tf.train.AdamOptimizer(args.learning_rate).minimize(total_loss)
+		train_discriminator = optimizer.minimize(discriminator_loss, var_list=discriminator_vars)
+		train_generator = optimizer.minimize(generator_loss, var_list=generator_vars)
+
+		train_tensor = tf.group([train_discriminator, train_generator])
 
 		# Set up train op to return loss
 		with tf.control_dependencies([train_tensor]):
@@ -114,7 +142,7 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--split', type=str, default='train')
 	parser.add_argument('--dataset_dir', type=str, default='data')
-	parser.add_argument('--batch_size', type=int, default=1)
+	parser.add_argument('--batch_size', type=int, default=128)
 	parser.add_argument('--num_batches', type=int, default=100000)
 	parser.add_argument('--shuffle', type=bool, default=True)
 	parser.add_argument('--output_dir', type=str, default='output/%d' % int(time.time() * 1000))
