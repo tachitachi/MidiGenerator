@@ -6,6 +6,7 @@ from tqdm import tqdm
 import os
 import time
 from model2 import WaveNet, WavePatch
+from pool import HistoryPool
 
 def main(args):
 
@@ -38,22 +39,25 @@ def main(args):
 
 	wavepatch = WavePatch(dilations=dilations, pool_stride=64, scope='model/discriminator')
 
-	preds = wavepatch(tf.concat([batch_y, generated], axis=0))
+	midi_pool = HistoryPool(y.shape.as_list(), max_size=args.pool_size)
+
+	preds_d = wavepatch(tf.concat([batch_y, midi_pool.query(generated)], axis=0))
+	preds_g = wavepatch(tf.concat([batch_y, generated], axis=0), reuse=True)
 
 	labels_real = tf.zeros((args.batch_size, 1, 1), dtype=tf.float32)
 	labels_fake = tf.ones((args.batch_size, 1, 1), dtype=tf.float32)
 
-	labels = tf.tile(tf.concat([labels_real, labels_fake], axis=0), [1, tf.shape(preds)[1], tf.shape(preds)[2]])
+	labels = tf.tile(tf.concat([labels_real, labels_fake], axis=0), [1, tf.shape(preds_d)[1], tf.shape(preds_d)[2]])
 
 
 	# create loss functions
 
-	discriminator_loss = tf.losses.sigmoid_cross_entropy(labels, preds, scope='discriminator_loss')
-	generator_loss = tf.losses.sigmoid_cross_entropy(1 - labels, preds, scope='generator_loss')
+	discriminator_loss = tf.losses.sigmoid_cross_entropy(labels, preds_d, scope='discriminator_loss')
+	generator_loss = tf.losses.sigmoid_cross_entropy(1 - labels, preds_g, scope='generator_loss')
 
 	total_loss = discriminator_loss + generator_loss
 
-	discriminator_accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.cast(tf.round(tf.nn.sigmoid(preds)), tf.int32), tf.cast(labels, tf.int32)), tf.float32))
+	discriminator_accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.cast(tf.round(tf.nn.sigmoid(preds_d)), tf.int32), tf.cast(labels, tf.int32)), tf.float32))
 	tf.summary.scalar('discriminator_accuracy', discriminator_accuracy)
 
 
@@ -142,7 +146,8 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--split', type=str, default='train')
 	parser.add_argument('--dataset_dir', type=str, default='data')
-	parser.add_argument('--batch_size', type=int, default=128)
+	parser.add_argument('--batch_size', type=int, default=32)
+	parser.add_argument('--pool_size', type=int, default=256)
 	parser.add_argument('--num_batches', type=int, default=100000)
 	parser.add_argument('--shuffle', type=bool, default=True)
 	parser.add_argument('--output_dir', type=str, default='output/%d' % int(time.time() * 1000))
