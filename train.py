@@ -37,12 +37,14 @@ def main(args):
 	MidiDataset.to_summary('generated', generated)
 	MidiDataset.to_summary('output_midi', tf.round(generated))
 
-	wavepatch = WavePatch(dilations=dilations, pool_stride=64, scope='model/discriminator')
+	wavepatch = WavePatch(dilations=[1, 1, 2, 4, 8, 16, 32, 64], pool_stride=32, scope='model/discriminator')
 
 	midi_pool = HistoryPool(y.shape.as_list(), max_size=args.pool_size)
 
 	preds_d = wavepatch(tf.concat([batch_y, midi_pool.query(generated)], axis=0))
 	preds_g = wavepatch(tf.concat([batch_y, generated], axis=0), reuse=True)
+
+	clip_op = tf.group([var.assign(tf.clip_by_value(var, -0.01, 0.01)) for var in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/discriminator')])
 
 	labels_real = tf.zeros((args.batch_size, 1, 1), dtype=tf.float32)
 	labels_fake = tf.ones((args.batch_size, 1, 1), dtype=tf.float32)
@@ -52,8 +54,17 @@ def main(args):
 
 	# create loss functions
 
-	discriminator_loss = tf.losses.sigmoid_cross_entropy(labels, preds_d, scope='discriminator_loss')
-	generator_loss = tf.losses.sigmoid_cross_entropy(1 - labels, preds_g, scope='generator_loss')
+	if args.mode == 'WGAN':
+		with tf.variable_scope('discriminator_loss'):
+			discriminator_loss = tf.reduce_mean(preds_d[:args.batch_size] - preds_d[args.batch_size:])
+			tf.losses.add_loss(discriminator_loss)
+
+		with tf.variable_scope('generator_loss'):
+			generator_loss = tf.reduce_mean(preds_g[args.batch_size:])
+			tf.losses.add_loss(generator_loss)
+	else:
+		discriminator_loss = tf.losses.sigmoid_cross_entropy(labels, preds_d, scope='discriminator_loss')
+		generator_loss = tf.losses.sigmoid_cross_entropy(1 - labels, preds_g, scope='generator_loss')
 
 	total_loss = discriminator_loss + generator_loss
 
@@ -71,10 +82,13 @@ def main(args):
 	inc_global_step = tf.assign_add(tf.train.get_or_create_global_step(), 1)
 	tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, inc_global_step)
 
-	discriminator_vars = var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/discriminator')
-	generator_vars = var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/generator')
+	discriminator_vars =tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/discriminator')
+	generator_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/generator')
 
-	optimizer = tf.train.AdamOptimizer(args.learning_rate, beta1=0.5)
+	if args.mode == 'WGAN':
+		optimizer = tf.train.RMSPropOptimizer(args.learning_rate)
+	else:
+		optimizer = tf.train.AdamOptimizer(args.learning_rate, beta1=0.5)
 
 	update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 	with tf.control_dependencies(update_ops):
@@ -86,6 +100,12 @@ def main(args):
 		# Set up train op to return loss
 		with tf.control_dependencies([train_tensor]):
 			train_op = tf.identity(total_loss, name='train_op')
+		# Set up train op to return loss
+		with tf.control_dependencies([train_discriminator]):
+			train_discriminator_op = tf.identity(discriminator_loss, name='train_discriminator_op')
+		# Set up train op to return loss
+		with tf.control_dependencies([train_generator]):
+			train_generator_op = tf.identity(generator_loss, name='train_generator_op')
 
 
 
@@ -129,10 +149,20 @@ def main(args):
 			if last_log_time < time.time() - args.log_every_n_seconds:
 				last_log_time = time.time()
 				summary, loss_val, global_step = sess.run([summary_op, train_op, tf.train.get_global_step()])
+				if args.mode == 'WGAN':
+					sess.run(clip_op)
 				writer.add_summary(summary, global_step)
 				writer.flush()
 			else:
-				loss_val, global_step = sess.run([train_op, tf.train.get_global_step()])
+				if args.mode == 'WGAN':
+					for step in range(args.discriminator_steps):
+						if step == 0:
+							loss_val, global_step = sess.run([train_op, tf.train.get_global_step()])
+						else:
+							loss_val, global_step = sess.run([train_discriminator_op, tf.train.get_global_step()])
+						sess.run(clip_op)
+				else:
+					loss_val, global_step = sess.run([train_op, tf.train.get_global_step()])
 
 			if last_save_time < time.time() - args.save_every_n_seconds:
 				last_save_time = time.time()
@@ -144,10 +174,12 @@ def main(args):
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
+	parser.add_argument('--mode', type=str, default='WGAN')
+	parser.add_argument('--discriminator_steps', type=int, default=5)
 	parser.add_argument('--split', type=str, default='train')
 	parser.add_argument('--dataset_dir', type=str, default='data')
 	parser.add_argument('--batch_size', type=int, default=32)
-	parser.add_argument('--pool_size', type=int, default=256)
+	parser.add_argument('--pool_size', type=int, default=512)
 	parser.add_argument('--num_batches', type=int, default=100000)
 	parser.add_argument('--shuffle', type=bool, default=True)
 	parser.add_argument('--output_dir', type=str, default='output/%d' % int(time.time() * 1000))

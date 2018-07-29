@@ -121,21 +121,22 @@ class WavePatch(object):
 		
 			skip_layers = []
 
-			h = DilatedCausalConv1d(x, self.filter_width, channels=self.dilation_channels, dilation_rate=1, name='causal_conv')
+			h, _ = ResidualDilationLayerNC(x, kernel_size=self.filter_width, dilation_channels=self.dilation_channels, 
+					skip_channels=self.skip_channels, dilation_rate=1, name='nc_conv')
 
 			for i in range(len(self.dilations)):
 				dilation = self.dilations[i]
 				name = 'dilated_conv_{}'.format(i)
-				h, skip = ResidualDilationLayer(h, kernel_size=self.filter_width, dilation_channels=self.dilation_channels, 
+				h, skip = ResidualDilationLayerNC(h, kernel_size=self.filter_width, dilation_channels=self.dilation_channels, 
 					skip_channels=self.skip_channels, dilation_rate=dilation, name=name)
 				skip_layers.append(skip)
 
 
 			total = tf.reduce_sum(skip_layers, axis=0)
-			total = tf.nn.relu(total)
+			#total = tf.nn.relu(total)
 
-			total = tf.layers.conv1d(total, filters=self.skip_channels, kernel_size=1, strides=1, padding='SAME')
-			total = tf.nn.relu(total)
+			#total = tf.layers.conv1d(total, filters=self.skip_channels, kernel_size=1, strides=1, padding='SAME')
+			#total = tf.nn.relu(total)
 
 			total = tf.layers.conv1d(total, filters=1, kernel_size=1, strides=1, padding='SAME')
 			
