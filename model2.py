@@ -210,7 +210,6 @@ class MidiAutoencoder(object):
 
 				net = tf.transpose(net, [0, 2, 1])
 				encoding = tf.nn.pool(net, window_shape=(self.pool_stride,), strides=(self.pool_stride,), pooling_type='AVG', padding='VALID')
-				print(encoding)
 
 
 			with tf.variable_scope('decoder'):
@@ -223,10 +222,7 @@ class MidiAutoencoder(object):
 
 				expanded_decoding.set_shape([None, None, self.ndf * 8])
 
-				print(encoding, expanded_decoding)
 				net = tf.expand_dims(expanded_decoding, 2)
-
-
 
 				# 64 -> 128
 				net = tf.layers.conv2d_transpose(net, filters=self.ndf * 4, kernel_size=(3,1), strides=(2,1), padding='SAME')
@@ -253,3 +249,40 @@ class MidiAutoencoder(object):
 
 
 			return output, encoding
+
+	def decode(self, x, reuse=False):
+		with tf.variable_scope(self.scope, reuse=reuse):
+
+			with tf.variable_scope('decoder'):
+
+				encoding = x
+
+				#net = tf.expand_dims(layers['conv6'] + net, 2)
+				expanded_decoding = ops.ResizeEmbeddingNearestNeighbor(encoding, self.pool_stride * tf.shape(encoding)[1])
+
+				expanded_decoding = tf.transpose(expanded_decoding, [0, 2, 1])
+
+				expanded_decoding.set_shape([None, None, self.ndf * 8])
+
+				net = tf.expand_dims(expanded_decoding, 2)
+
+				# 64 -> 128
+				net = tf.layers.conv2d_transpose(net, filters=self.ndf * 4, kernel_size=(3,1), strides=(2,1), padding='SAME')
+				net = tf.contrib.layers.layer_norm(net, activation_fn=self.activation_fn)
+
+				# 128 -> 256
+				#net = tf.layers.conv2d_transpose(tf.expand_dims(layers['conv3'], 2) + net, filters=self.ndf * 2, kernel_size=(3,1), strides=(2,1), padding='SAME')
+				net = tf.layers.conv2d_transpose(net, filters=self.ndf * 2, kernel_size=(3,1), strides=(2,1), padding='SAME')
+				net = tf.contrib.layers.layer_norm(net, activation_fn=self.activation_fn)
+
+				# 512 -> 512
+				#net = tf.layers.conv2d_transpose(tf.expand_dims(layers['conv2'], 2) + net, filters=self.ndf, kernel_size=(5,1), strides=(2,1), padding='SAME')
+				net = tf.layers.conv2d_transpose(net, filters=self.ndf, kernel_size=(5,1), strides=(2,1), padding='SAME')
+				net = tf.contrib.layers.layer_norm(net, activation_fn=self.activation_fn)
+
+				# 512 -> 128
+				net = tf.layers.conv2d_transpose(net, filters=self.output_channels, kernel_size=(7,1), strides=(1,1), padding='SAME')
+
+				output = tf.squeeze(net, 2)
+
+				return output
