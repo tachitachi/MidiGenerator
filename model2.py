@@ -61,7 +61,7 @@ def ResidualDilationLayerNC(inputs, kernel_size, dilation_channels, skip_channel
 
 class WaveNet(object):
 	def __init__(self, dilations=[1, 2, 4, 8, 16, 32, 64, 128, 256], filter_width=2, 
-		         dilation_channels=32, skip_channels=256, output_channels=128, activation_fn=None, scope='WaveNet'):
+				 dilation_channels=32, skip_channels=256, output_channels=128, activation_fn=None, scope='WaveNet'):
 
 		self.dilations = dilations
 		self.filter_width = filter_width
@@ -106,7 +106,7 @@ class WaveNet(object):
 
 class WavePatch(object):
 	def __init__(self, dilations=[1, 2, 4, 8, 16, 32, 64, 128, 256], filter_width=2, 
-		         dilation_channels=32, skip_channels=256, pool_stride=128, scope='WavePatch'):
+				 dilation_channels=32, skip_channels=256, pool_stride=128, scope='WavePatch'):
 
 		self.dilations = dilations
 		self.filter_width = filter_width
@@ -286,3 +286,111 @@ class MidiAutoencoder(object):
 				output = tf.squeeze(net, 2)
 
 				return output
+
+
+
+class Transformer(object):
+	def __init__(self, ndf=64, output_channels=None, leaky=False, output_fn=None, scope='Transformer'):
+		self.ndf = ndf
+		self.output_channels = output_channels
+		self.leaky = leaky
+		self.output_fn = output_fn
+		self.scope = scope
+
+
+	def __call__(self, x, reuse=False):
+
+		if self.leaky:
+			activation_fn = tf.nn.leaky_relu
+		else:
+			activation_fn = tf.nn.relu
+
+		with tf.variable_scope(self.scope, reuse=reuse):
+
+			net = x
+
+			net = tf.layers.conv2d(net, filters=self.ndf, kernel_size=7, strides=1, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			
+			net = tf.layers.conv2d(net, filters=self.ndf * 2, kernel_size=3, strides=2, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			
+			net = tf.layers.conv2d(net, filters=self.ndf * 4, kernel_size=3, strides=2, padding='SAME')
+			skip1 = net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			
+			net = tf.layers.conv2d(net, filters=self.ndf * 4, kernel_size=3, strides=1, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			
+			net = tf.layers.conv2d(net, filters=self.ndf * 4, kernel_size=3, strides=1, padding='SAME')
+			skip2 = net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			
+			net = tf.layers.conv2d(skip1 + net, filters=self.ndf * 4, kernel_size=3, strides=1, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			
+			net = tf.layers.conv2d(net, filters=self.ndf * 4, kernel_size=3, strides=1, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+
+			net = tf.layers.conv2d_transpose(skip2 + net, filters=self.ndf * 2, kernel_size=3, strides=2, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+
+			net = tf.layers.conv2d_transpose(net, filters=self.ndf, kernel_size=3, strides=2, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			if self.output_channels is None:
+				net = tf.layers.conv2d_transpose(net, filters=x.shape[-1], kernel_size=7, strides=1, padding='SAME')
+			else:
+				net = tf.layers.conv2d_transpose(net, filters=output_channels, kernel_size=7, strides=1, padding='SAME')
+
+
+			if self.output_fn == 'tanh':
+				net = tf.nn.tanh(net)
+			elif self.output_fn == 'softmax':
+				net = tf.nn.softmax(net)
+			elif self.output_fn == 'sigmoid':
+				net = tf.nn.sigmoid(net)
+
+			return net
+
+
+class Adversary(object):
+	def __init__(self, ndf=64, scope='Adversary', leaky=False):
+		self.ndf = ndf
+		self.scope = scope
+		self.leaky = leaky
+
+	def __call__(self, x, reuse=False):
+		if self.leaky:
+			activation_fn = tf.nn.leaky_relu
+		else:
+			activation_fn = tf.nn.relu
+		
+		with tf.variable_scope(self.scope, reuse=reuse):
+
+			net = x
+
+			net = tf.layers.conv2d(net, filters=self.ndf, kernel_size=4, strides=2, padding='SAME')
+			net = activation_fn(net)
+
+			net = tf.layers.conv2d(net, filters=self.ndf * 2, kernel_size=4, strides=2, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			net = tf.layers.conv2d(net, filters=self.ndf * 4, kernel_size=4, strides=2, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			net = tf.layers.conv2d(net, filters=self.ndf * 8, kernel_size=4, strides=2, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			net = tf.layers.conv2d(net, filters=self.ndf * 8, kernel_size=4, strides=1, padding='SAME')
+			net = tf.contrib.layers.instance_norm(net, activation_fn=activation_fn)
+
+			net = tf.layers.conv2d(net, filters=1, kernel_size=4, strides=1, padding='SAME')
+
+			return net

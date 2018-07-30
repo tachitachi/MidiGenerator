@@ -204,7 +204,7 @@ class MidiParse(object):
 		end_unit = self.ticksToUnits(end)
 		encoding[start_unit:end_unit,note] = 1
 
-	def parse(self, path):
+	def parse(self, path, merge_tracks=True):
 		midi = mido.MidiFile(path)
 
 		self.update_timing(midi)
@@ -226,46 +226,53 @@ class MidiParse(object):
 		encoding = np.zeros((song_length, self.notes), dtype=np.uint8)
 
 		# note_on velocity=0, and note_off are equivalent
-		tracks = mido.merge_tracks(midi.tracks[1:])
-		total_time = 0
-		for msg in tracks:
-			if msg.is_meta or not hasattr(msg, 'note'):
-				continue
-			if msg.type == 'note_on':
-				note = msg.note
-				time = msg.time
-				velocity = msg.velocity
 
-				total_time += time
+		if merge_tracks:
+			tracks = [mido.merge_tracks(midi.tracks[1:])]
+		else:
+			tracks = midi.tracks[1:]
 
-				if velocity == 0:
+		for track_number, track in enumerate(tracks):
+
+			total_time = 0
+			for msg in track:
+				if msg.is_meta or not hasattr(msg, 'note'):
+					continue
+				if msg.type == 'note_on':
+					note = msg.note
+					time = msg.time
+					velocity = msg.velocity
+
+					total_time += time
+
+					if velocity == 0:
+						prev_time = notes_in_use[note].time
+						#print('%d from %d - %d' % (note, self.ticksToUnits(prev_time), self.ticksToUnits(total_time)))
+						self.updateEncoding(note, prev_time, total_time, encoding)
+						
+					else:
+						notes_in_use[note].note = note
+						notes_in_use[note].on = True
+						notes_in_use[note].time = total_time
+
+
+				if msg.type == 'note_off':
+					note = msg.note
+					time = msg.time
+
+					total_time += time
+
 					prev_time = notes_in_use[note].time
 					#print('%d from %d - %d' % (note, self.ticksToUnits(prev_time), self.ticksToUnits(total_time)))
 					self.updateEncoding(note, prev_time, total_time, encoding)
-					
-				else:
-					notes_in_use[note].note = note
-					notes_in_use[note].on = True
-					notes_in_use[note].time = total_time
 
 
-			if msg.type == 'note_off':
-				note = msg.note
-				time = msg.time
+			#print(encoding[:,60])
+			#print(np.sum(encoding))
 
-				total_time += time
-
-				prev_time = notes_in_use[note].time
-				#print('%d from %d - %d' % (note, self.ticksToUnits(prev_time), self.ticksToUnits(total_time)))
-				self.updateEncoding(note, prev_time, total_time, encoding)
-
-
-		#print(encoding[:,60])
-		#print(np.sum(encoding))
-
-		basename, _ = os.path.splitext(os.path.basename(path))
-		out_path = os.path.join(self.data_dir, basename)
-		np.save(out_path, encoding)
+			basename, _ = os.path.splitext(os.path.basename(path))
+			out_path = os.path.join(self.data_dir, '%s_%d' % (basename, track_number))
+			np.save(out_path, encoding)
 
 def create_batch(tensors, batch_size=32, shuffle=False, queue_size=10000, min_queue_size=5000, num_threads=1):
     # Must initialize tf.GraphKeys.QUEUE_RUNNERS
@@ -280,6 +287,7 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--data_dir', type=str, default='data')
 	parser.add_argument('--output_dir', type=str, default='data/parsed')
+	parser.add_argument('--merge', type=bool, default=False)
 
 	args = parser.parse_args()
 
@@ -290,6 +298,6 @@ if __name__ == '__main__':
 			if file.endswith('.mid') or file.endswith('.midi'):
 				#parser.parse(os.path.join(root, file))
 				try:
-					parser.parse(os.path.join(root, file))
+					parser.parse(os.path.join(root, file), merge_tracks=args.merge)
 				except:
 					print('failed to parse midi file %s' % file)
